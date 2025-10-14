@@ -8,6 +8,9 @@ import {
   hasStates, hasCities
 } from './db/dal.js';
 
+import { getDB, saveWebStore } from './db/sqlite.js';
+import { DB_NAME, API_BASE } from './config.js';
+
 /* Diagnostics */
 window.addEventListener('unhandledrejection', e => console.error('Unhandled promise rejection:', e.reason));
 window.addEventListener('error', e => console.error('Window error:', e.error || e.message));
@@ -29,6 +32,9 @@ const cityForm     = document.getElementById('cityForm');
 const cityState    = document.getElementById('cityState');
 const cityName     = document.getElementById('cityName');
 const cityList     = document.getElementById('cityList');
+
+const resetBtn    = document.getElementById('resetBtn');
+const RESET_TOKEN = 'RGramuGarkini9876543210A9F3B7C6D2E8F10B7C9A1D4E6F8B3C220251015T203000Z';
 
 let editCountryUuid = null;
 let editStateUuid   = null;
@@ -236,6 +242,62 @@ syncBtn?.addEventListener('click', blockWhile(async ()=>{
     await renderAll();
     ok('Sync complete.');
   } catch (e) { console.error(e); bad(`Sync error: ${e?.message || e}`); }
+}));
+
+/* Reset (danger zone) */
+resetBtn?.addEventListener('click', blockWhile(async ()=> {
+  try {
+    if (!confirm('This will erase ALL local data and also clear the CLOUD database. Continue?')) return;
+    muted('Resetting local DB…');
+
+    const db = await getDB(DB_NAME);
+    await db.execute(`
+      DELETE FROM cities;
+      DELETE FROM states;
+      DELETE FROM countries;
+      DELETE FROM sync_ack;
+      DELETE FROM sync_queue;
+    `);
+    try { await db.execute('VACUUM;'); } catch {}
+    await saveWebStore(DB_NAME);
+
+    // ---- NEW: reset cloud ----
+    muted('Resetting cloud DB…');
+    try {
+      const res = await fetch(`${API_BASE}/api/truncate_all.php`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'X-Reset-Token': RESET_TOKEN
+        },
+        body: '' // or `token=${encodeURIComponent(RESET_TOKEN)}` if you prefer POST body
+      });
+      const txt = await res.text().catch(()=> '');
+      let ok = false;
+      try { ok = (JSON.parse(txt)?.ok === true); } catch {}
+      if (!res.ok || !ok) {
+        console.error('Cloud reset failed', res.status, txt.slice(0,400));
+        bad('Cloud reset failed (see console).');
+      } else {
+        ok('Cloud DB cleared.');
+      }
+    } catch (err) {
+      console.error('Cloud reset error', err);
+      bad('Cloud reset error (see console).');
+    }
+
+    // Clear UI state and re-render
+    editCountryUuid = editStateUuid = editCityUuid = null;
+    if (countryName) countryName.value = '';
+    if (stateName)   stateName.value   = '';
+    if (cityName)    cityName.value    = '';
+    if (stateCountry) stateCountry.value = '';
+    if (cityState)    cityState.value   = '';
+    await renderAll();
+  } catch (e) {
+    console.error(e);
+    bad(`Reset failed: ${e?.message || e}`);
+  }
 }));
 
 /* Boot */

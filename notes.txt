@@ -4,4 +4,7 @@ npx cap copy android
 npx cap sync android
 cd android
 ./gradlew clean :app:installDebug
+cd ../
+
+
 adb shell am start -n app.edgesyncdb.in/app.edgesyncdb.in.MainActivity
