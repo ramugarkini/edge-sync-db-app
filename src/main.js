@@ -266,16 +266,13 @@ resetBtn?.addEventListener('click', blockWhile(async ()=> {
     try {
       const res = await fetch(`${API_BASE}/api/truncate_all.php`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'X-Reset-Token': RESET_TOKEN
-        },
-        body: '' // or `token=${encodeURIComponent(RESET_TOKEN)}` if you prefer POST body
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `token=${encodeURIComponent(RESET_TOKEN)}`
       });
       const txt = await res.text().catch(()=> '');
-      let ok = false;
-      try { ok = (JSON.parse(txt)?.ok === true); } catch {}
-      if (!res.ok || !ok) {
+      let success = false;
+      try { success = (JSON.parse(txt)?.ok === true); } catch {}
+      if (!res.ok || !success) {
         console.error('Cloud reset failed', res.status, txt.slice(0,400));
         bad('Cloud reset failed (see console).');
       } else {
