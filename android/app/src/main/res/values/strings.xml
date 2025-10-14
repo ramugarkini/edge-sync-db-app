@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">edgesyncdb.in</string>
+    <string name="title_activity_main">edgesyncdb.in</string>
+    <string name="package_name">app.edgesyncdb.in</string>
+    <string name="custom_url_scheme">app.edgesyncdb.in</string>
+</resources>

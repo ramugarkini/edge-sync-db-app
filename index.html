@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <title>EdgeSyncDB</title>
+  <style>
+    body { font-family: system-ui, sans-serif; padding: 14px; }
+    h2 { margin-top: 24px; }
+    form, .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+    input, select, button { padding:8px; }
+    ul { padding-left: 16px; }
+    .ok { color: #1b7; }
+    .bad { color: #e33; }
+    .muted { color:#666; font-size:.9em; }
+    .grid { display:grid; grid-template-columns: 180px 1fr; gap:8px; align-items:center; }
+    .card { border:1px solid #ddd; border-radius:12px; padding:12px; margin:8px 0; }
+  </style>
+  <script>
+    // Needed only for web with sql.js
+    window.SQL_JS = { locateFile: (f) => `/assets/${f}` };
+  </script>
+</head>
+<body>
+  <h1>EdgeSyncDB (Offline-first)</h1>
+
+  <div class="row">
+    <button id="syncBtn">Sync</button>
+    <span id="status" class="muted">Starting…</span>
+  </div>
+
+  <h2>Countries</h2>
+  <form id="countryForm">
+    <input id="countryName" placeholder="Country name" required />
+    <button type="submit">Add / Update</button>
+  </form>
+  <div id="countryList" class="card"></div>
+
+  <h2>States</h2>
+  <form id="stateForm" class="grid">
+    <label for="stateCountry">Country</label>
+    <select id="stateCountry" required></select>
+    <label for="stateName">State name</label>
+    <input id="stateName" required />
+    <div></div><button type="submit">Add / Update</button>
+  </form>
+  <div id="stateList" class="card"></div>
+
+  <h2>Cities</h2>
+  <form id="cityForm" class="grid">
+    <label for="cityState">State</label>
+    <select id="cityState" required></select>
+    <label for="cityName">City name</label>
+    <input id="cityName" required />
+    <div></div><button type="submit">Add / Update</button>
+  </form>
+  <div id="cityList" class="card"></div>
+
+  <!-- Vite dev: -->
+  <script type="module" src="/src/main.js"></script>
+  <!-- For production, your bundler will emit /assets/index-*.js and inject it -->
+</body>
+</html>

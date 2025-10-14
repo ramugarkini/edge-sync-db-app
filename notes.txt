@@ -1,0 +1,7 @@
+# from project root (where package.json lives)
+npm run build  # or your web build command
+npx cap copy android
+npx cap sync android
+cd android
+./gradlew clean :app:installDebug
+adb shell am start -n app.edgesyncdb.in/app.edgesyncdb.in.MainActivity
