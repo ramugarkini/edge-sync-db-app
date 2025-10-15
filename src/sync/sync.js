@@ -133,25 +133,40 @@ export async function syncNow() {
     let payload = {};
     try { payload = JSON.parse(r.json_payload || '{}'); } catch {}
 
-    // Normalize operation & data
+    // Normalize operation
     let op = (r.operation || payload.operation || '').toUpperCase();
     if (!op) op = 'UPSERT';
 
+    // Extract data object
     const rawData = payload && typeof payload === 'object'
       ? (payload.data && typeof payload.data === 'object' ? payload.data : payload)
       : {};
 
-    // Remap parent UUID keys to what PHP expects (it resolves *_id UUID → numeric ID)
+    // Build the payload we'll actually send
     const data = { ...rawData };
+
+    // Ensure last_updated exists (server uses it for conflict/format)
+    if (!data.last_updated) data.last_updated = new Date().toISOString();
+
+    // ── FK remaps + strip helper keys ───────────────────────────────
     if (r.table_name === 'states') {
+      // send only country_id (UUID value); strip country_uuid to avoid unknown column errors
       if (data.country_uuid && !data.country_id) data.country_id = data.country_uuid;
+      delete data.country_uuid;
     }
     if (r.table_name === 'cities') {
+      // send only state_id (UUID value); strip state_uuid to avoid unknown column errors
       if (data.state_uuid && !data.state_id) data.state_id = data.state_uuid;
+      delete data.state_uuid;
     }
+    // ────────────────────────────────────────────────────────────────
 
     // Prefer explicit uuid if present, else queued record_uuid
     const effectiveUuid = data.uuid || r.record_uuid || '';
+    if (!effectiveUuid) {
+      console.error('[Skip upload: empty uuid]', { table: r.table_name, id: r.id, data });
+      continue;
+    }
 
     // Build form body
     const form = new URLSearchParams();
@@ -168,25 +183,25 @@ export async function syncNow() {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: form.toString()
       });
-// inside Local → Cloud upload
-if (res.ok) {
-  const txt = (await res.text().catch(() => '')).trim();
-  let ok = false;
-  if (/success/i.test(txt)) ok = true;
-  if (!ok) { try { ok = (JSON.parse(txt)?.ok === true); } catch {} }
 
-  if (ok) {
-    await writeAck(r.id, 'local');
-    await db.run(`DELETE FROM sync_queue WHERE id=?`, [r.id]);
-  } else {
-    console.error('[Upload response not success]', { table: r.table_name, id: r.id, resp: txt.slice(0,400) });
-  }
-} else {
-  console.error('[Upload failed]', { table: r.table_name, id: r.id, status: res.status });
-}
+      const txt = (await res.text().catch(() => '')).trim();
+
+      if (!res.ok) {
+        console.error('[Upload failed]', { table: r.table_name, id: r.id, status: res.status, resp: txt.slice(0,400) });
+        continue; // keep for retry
+      }
+
+      let success = /success/i.test(txt);
+      if (!success) { try { success = (JSON.parse(txt)?.ok === true); } catch {} }
+
+      if (success) {
+        await writeAck(r.id, 'local');
+        await db.run(`DELETE FROM sync_queue WHERE id=?`, [r.id]);
+      } else {
+        console.error('[Upload response not success]', { table: r.table_name, id: r.id, resp: txt.slice(0,400) });
+      }
     } catch (err) {
-      console.error('Local → Cloud upload error:', err);
-      // keep for retry
+      console.error('[Local→Cloud upload error]', { table: r.table_name, id: r.id, endpoint, err });
     }
   }
 
