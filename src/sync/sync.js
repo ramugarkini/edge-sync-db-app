@@ -6,6 +6,7 @@ import { API_BASE, DB_NAME, DEVICE_CODE } from '../config.js';
 // ---- Online/Offline guard (UI + cache) --------------------------
 let ONLINE_CACHE = false;
 let NET_UNSUB = null;
+let LAST_ONLINE = false; // NEW: to detect rising edge (offline -> online)
 
 function setSyncControlsUI(online, ids) {
   const { syncBtnId, resetBtnId, statusId } = ids || {};
@@ -44,18 +45,37 @@ function setSyncControlsUI(online, ids) {
 /**
  * Initialize network → UI wiring once (e.g., on app start)
  * @param {{syncBtnId:string, resetBtnId:string, statusId?:string}} ids
+ * @param {{ onOnline?: () => void }=} opts  // NEW: optional callback when we transition to online
  */
-export async function initNetworkGuard(ids) {
-  try {
+export async function initNetworkGuard(ids, opts = {}) {
+   try {
     const st = await Network.getStatus();
-    setSyncControlsUI(st.connected && !!API_BASE, ids);
-  } catch {
-    setSyncControlsUI(false, ids);
-  }
-  NET_UNSUB = await Network.addListener('networkStatusChange', (st) => {
-    setSyncControlsUI(st.connected && !!API_BASE, ids);
-  });
-}
+    const online = st.connected && !!API_BASE;
+    setSyncControlsUI(online, ids);
+    LAST_ONLINE = !!online;
+    // If we start in online state, you may choose to sync once:
+    if (LAST_ONLINE && typeof opts.onOnline === 'function') {
+      // fire-and-forget; let caller handle await if needed
+      Promise.resolve().then(() => opts.onOnline());
+    }
+   } catch {
+     setSyncControlsUI(false, ids);
+    LAST_ONLINE = false;
+   }
+   NET_UNSUB = await Network.addListener('networkStatusChange', (st) => {
+    const online = st.connected && !!API_BASE;
+    setSyncControlsUI(online, ids);
+    if (online && !LAST_ONLINE) {
+      LAST_ONLINE = true;
+      if (typeof opts.onOnline === 'function') {
+        // Trigger once on rising edge
+        opts.onOnline();
+      }
+    } else if (!online) {
+      LAST_ONLINE = false;
+    }
+   });
+ }
 
 /** Optional cleanup if you navigate/unmount screens */
 export function disposeNetworkGuard() {

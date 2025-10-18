@@ -1,6 +1,6 @@
 // src/main.js
 import { openAndMigrate } from './db/init.js';
-import { trySync, initNetworkGuard } from './sync/sync.js'; // <-- added initNetworkGuard
+import { trySync, initNetworkGuard } from './sync/sync.js'; // we’ll pass onOnline callback
 import {
   listCountries, listStates, listCities,
   saveCountryOffline, saveStateOffline, saveCityOffline,
@@ -55,6 +55,32 @@ function ok(msg){ if(statusEl){ statusEl.textContent = msg; statusEl.className='
 function bad(msg){ if(statusEl){ statusEl.textContent = msg; statusEl.className='bad'; } }
 function muted(msg){ if(statusEl){ statusEl.textContent = msg; statusEl.className='muted'; } }
 function isOffline(){ return statusEl?.dataset?.state === 'offline'; } // set by initNetworkGuard
+
+/* ---------- Auto-sync helpers (debounced) ---------- */
+let syncTimer = null;
+async function autoSync() {
+  if (isOffline()) return; // hard stop while offline
+  try {
+    muted('Syncing…');
+    await trySync();
+    await renderAll();
+    ok('Synced.');
+  } catch (e) {
+    console.error(e);
+    bad(`Sync error: ${e?.message || e}`);
+  }
+}
+function scheduleAutoSync(immediate = false) {
+  if (isOffline()) return;
+  clearTimeout(syncTimer);
+  if (immediate) {
+    // run now (e.g., on online re-connect)
+    void autoSync();
+  } else {
+    // short debounce to collapse rapid CRUD bursts
+    syncTimer = setTimeout(() => void autoSync(), 400);
+  }
+}
 
 /* Renderers */
 async function renderCountries() {
@@ -216,6 +242,8 @@ countryForm?.addEventListener('submit', blockWhile(async (e)=>{
     countryName.value = '';
     await renderCountries();
     ok('Country saved offline.');
+    // If online, sync immediately after CRUD
+    scheduleAutoSync(false);
   } catch (err) { console.error(err); bad(`Save country failed: ${err?.message || err}`); }
 }));
 
@@ -230,6 +258,7 @@ stateForm?.addEventListener('submit', blockWhile(async (e)=>{
     stateName.value = '';
     await renderStates();
     ok('State saved offline.');
+    scheduleAutoSync(false);
   } catch (err) { console.error(err); bad(`Save state failed: ${err?.message || err}`); }
 }));
 
@@ -244,6 +273,7 @@ cityForm?.addEventListener('submit', blockWhile(async (e)=>{
     cityName.value = '';
     await renderCities();
     ok('City saved offline.');
+    scheduleAutoSync(false);
   } catch (err) { console.error(err); bad(`Save city failed: ${err?.message || err}`); }
 }));
 
@@ -320,11 +350,17 @@ resetBtn?.addEventListener('click', blockWhile(async ()=>{
     ok('DB ready');
 
     // Wire online/offline → UI (disables Sync/Reset + shows status)
-    await initNetworkGuard({
-      syncBtnId: 'syncBtn',
-      resetBtnId: 'resetBtn',
-      statusId: 'status'
-    });
+    await initNetworkGuard(
+      {
+        syncBtnId: 'syncBtn',
+        resetBtnId: 'resetBtn',
+        statusId: 'status'
+      },
+      {
+        // When internet arrives (offline -> online), auto-sync immediately
+        onOnline: () => scheduleAutoSync(true)
+      }
+    );
 
     await renderAll();
   } catch (e) {
