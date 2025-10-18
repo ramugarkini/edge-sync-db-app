@@ -3,9 +3,78 @@ import { Network } from '@capacitor/network';
 import { getDB, saveWebStore } from '../db/sqlite.js';
 import { API_BASE, DB_NAME, DEVICE_CODE } from '../config.js';
 
+// ---- Online/Offline guard (UI + cache) --------------------------
+let ONLINE_CACHE = false;
+let NET_UNSUB = null;
+
+function setSyncControlsUI(online, ids) {
+  const { syncBtnId, resetBtnId, statusId } = ids || {};
+  const syncBtn  = syncBtnId  ? document.getElementById(syncBtnId)  : null;
+  const resetBtn = resetBtnId ? document.getElementById(resetBtnId) : null;
+  const statusEl = statusId   ? document.getElementById(statusId)   : null;
+
+  ONLINE_CACHE = !!online;
+
+  // --- Buttons: identical disabled behavior for Sync & Reset when offline ---
+  [syncBtn, resetBtn].forEach(el => {
+    if (!el) return;
+    if (ONLINE_CACHE) {
+      el.removeAttribute('disabled');
+      el.classList.remove('opacity-50','pointer-events-none');
+      el.title = '';
+      // Note: we do NOT touch your inline red styles on the Reset button.
+    } else {
+      el.setAttribute('disabled', 'true');
+      el.classList.add('opacity-50','pointer-events-none'); // same visual as Sync
+      el.title = 'Disabled while offline';
+    }
+  });
+
+  // --- Status text: green when online, red when offline ---
+  if (statusEl) {
+    statusEl.textContent = ONLINE_CACHE ? 'Online' : 'No internet';
+    statusEl.dataset.state = ONLINE_CACHE ? 'online' : 'offline';
+    // Color: reuse your existing classes
+    statusEl.classList.remove('ok','bad','muted');
+    statusEl.classList.add(ONLINE_CACHE ? 'ok' : 'bad');
+  }
+}
+
+
+/**
+ * Initialize network → UI wiring once (e.g., on app start)
+ * @param {{syncBtnId:string, resetBtnId:string, statusId?:string}} ids
+ */
+export async function initNetworkGuard(ids) {
+  try {
+    const st = await Network.getStatus();
+    setSyncControlsUI(st.connected && !!API_BASE, ids);
+  } catch {
+    setSyncControlsUI(false, ids);
+  }
+  NET_UNSUB = await Network.addListener('networkStatusChange', (st) => {
+    setSyncControlsUI(st.connected && !!API_BASE, ids);
+  });
+}
+
+/** Optional cleanup if you navigate/unmount screens */
+export function disposeNetworkGuard() {
+  if (NET_UNSUB && typeof NET_UNSUB.remove === 'function') {
+    NET_UNSUB.remove();
+  }
+  NET_UNSUB = null;
+}
+
+// ----------------------------------------------------------------
+
 async function isOnline() {
-  const status = await Network.getStatus();
-  return status.connected && !!API_BASE;
+  try {
+    const status = await Network.getStatus();
+    ONLINE_CACHE = status.connected && !!API_BASE;
+    return ONLINE_CACHE;
+  } catch {
+    return ONLINE_CACHE && !!API_BASE;
+  }
 }
 
 async function isAcked(queueId, source) {
@@ -59,7 +128,7 @@ async function applyCloudRow(row) {
   }
 
   if (table === 'states') {
-    const country_uuid = src.country_uuid || src.country_id || null; // accept either key from server
+    const country_uuid = src.country_uuid || src.country_id || null;
     if (op === 'DELETE') {
       await db.run(`UPDATE states SET deleted_at=?, last_updated=? WHERE uuid=?`, [del, lu, uuid]);
       return;
@@ -78,7 +147,7 @@ async function applyCloudRow(row) {
   }
 
   if (table === 'cities') {
-    const state_uuid = src.state_uuid || src.state_id || null; // accept either key from server
+    const state_uuid = src.state_uuid || src.state_id || null;
     if (op === 'DELETE') {
       await db.run(`UPDATE cities SET deleted_at=?, last_updated=? WHERE uuid=?`, [del, lu, uuid]);
       return;
@@ -118,7 +187,7 @@ export async function syncNow() {
     console.error('Cloud → Local sync error:', err);
   }
 
-  // Local → Cloud  (form-urlencoded to match PHP endpoints)
+  // Local → Cloud
   const { values: localRows } = await db.query(
     `SELECT id, table_name, record_uuid, operation, json_payload FROM sync_queue
      WHERE id NOT IN (
@@ -133,42 +202,32 @@ export async function syncNow() {
     let payload = {};
     try { payload = JSON.parse(r.json_payload || '{}'); } catch {}
 
-    // Normalize operation
     let op = (r.operation || payload.operation || '').toUpperCase();
     if (!op) op = 'UPSERT';
 
-    // Extract data object
     const rawData = payload && typeof payload === 'object'
       ? (payload.data && typeof payload.data === 'object' ? payload.data : payload)
       : {};
 
-    // Build the payload we'll actually send
     const data = { ...rawData };
 
-    // Ensure last_updated exists (server uses it for conflict/format)
     if (!data.last_updated) data.last_updated = new Date().toISOString();
 
-    // ── FK remaps + strip helper keys ───────────────────────────────
     if (r.table_name === 'states') {
-      // send only country_id (UUID value); strip country_uuid to avoid unknown column errors
       if (data.country_uuid && !data.country_id) data.country_id = data.country_uuid;
       delete data.country_uuid;
     }
     if (r.table_name === 'cities') {
-      // send only state_id (UUID value); strip state_uuid to avoid unknown column errors
       if (data.state_uuid && !data.state_id) data.state_id = data.state_uuid;
       delete data.state_uuid;
     }
-    // ────────────────────────────────────────────────────────────────
 
-    // Prefer explicit uuid if present, else queued record_uuid
     const effectiveUuid = data.uuid || r.record_uuid || '';
     if (!effectiveUuid) {
       console.error('[Skip upload: empty uuid]', { table: r.table_name, id: r.id, data });
       continue;
     }
 
-    // Build form body
     const form = new URLSearchParams();
     form.set('table', r.table_name);
     form.set('operation', op);
@@ -188,7 +247,7 @@ export async function syncNow() {
 
       if (!res.ok) {
         console.error('[Upload failed]', { table: r.table_name, id: r.id, status: res.status, resp: txt.slice(0,400) });
-        continue; // keep for retry
+        continue;
       }
 
       let success = /success/i.test(txt);

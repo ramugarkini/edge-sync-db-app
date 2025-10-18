@@ -1,6 +1,6 @@
 // src/main.js
 import { openAndMigrate } from './db/init.js';
-import { trySync } from './sync/sync.js';
+import { trySync, initNetworkGuard } from './sync/sync.js'; // <-- added initNetworkGuard
 import {
   listCountries, listStates, listCities,
   saveCountryOffline, saveStateOffline, saveCityOffline,
@@ -40,10 +40,21 @@ let editCountryUuid = null;
 let editStateUuid   = null;
 let editCityUuid    = null;
 
+/* Tiny utility styles if you aren't using Tailwind */
+(function ensureUtilityClasses(){
+  const style = document.createElement('style');
+  style.textContent = `
+    .opacity-50{opacity:.5}
+    .pointer-events-none{pointer-events:none}
+  `;
+  document.head.appendChild(style);
+})();
+
 /* Helpers */
 function ok(msg){ if(statusEl){ statusEl.textContent = msg; statusEl.className='ok'; } }
 function bad(msg){ if(statusEl){ statusEl.textContent = msg; statusEl.className='bad'; } }
 function muted(msg){ if(statusEl){ statusEl.textContent = msg; statusEl.className='muted'; } }
+function isOffline(){ return statusEl?.dataset?.state === 'offline'; } // set by initNetworkGuard
 
 /* Renderers */
 async function renderCountries() {
@@ -117,7 +128,7 @@ async function renderAll() {
   await renderCities();
 }
 
-/* Busy guard */
+/* Busy guard (for forms + sync/reset) */
 let busy = false;
 function blockWhile(fn){
   return async (...args)=>{
@@ -133,7 +144,9 @@ function blockWhile(fn){
   };
 }
 function setDisabled(disabled){
-  if (syncBtn) syncBtn.disabled = disabled;
+  // Only lock sync button + forms during busy.
+  // Reset button is managed by network guard and should remain disabled if offline.
+  if (syncBtn) syncBtn.disabled = disabled || isOffline();
   if (countryForm) [...countryForm.elements].forEach(el => el.disabled = disabled);
   if (stateForm)   [...stateForm.elements].forEach(el => el.disabled = disabled);
   if (cityForm)    [...cityForm.elements].forEach(el => el.disabled = disabled);
@@ -236,6 +249,7 @@ cityForm?.addEventListener('submit', blockWhile(async (e)=>{
 
 /* Sync */
 syncBtn?.addEventListener('click', blockWhile(async ()=>{
+  if (isOffline()) { bad('No internet'); return; }
   try {
     muted('Syncing…');
     await trySync();
@@ -245,7 +259,8 @@ syncBtn?.addEventListener('click', blockWhile(async ()=>{
 }));
 
 /* Reset (danger zone) */
-resetBtn?.addEventListener('click', blockWhile(async ()=> {
+resetBtn?.addEventListener('click', blockWhile(async ()=>{
+  if (isOffline()) { bad('No internet'); return; }
   try {
     if (!confirm('This will erase ALL local data and also clear the CLOUD database. Continue?')) return;
     muted('Resetting local DB…');
@@ -261,7 +276,7 @@ resetBtn?.addEventListener('click', blockWhile(async ()=> {
     try { await db.execute('VACUUM;'); } catch {}
     await saveWebStore(DB_NAME);
 
-    // ---- NEW: reset cloud ----
+    // ---- reset cloud (requires API_BASE and online) ----
     muted('Resetting cloud DB…');
     try {
       const res = await fetch(`${API_BASE}/api/truncate_all.php`, {
@@ -303,6 +318,14 @@ resetBtn?.addEventListener('click', blockWhile(async ()=> {
     muted('Opening DB…');
     await openAndMigrate();
     ok('DB ready');
+
+    // Wire online/offline → UI (disables Sync/Reset + shows status)
+    await initNetworkGuard({
+      syncBtnId: 'syncBtn',
+      resetBtnId: 'resetBtn',
+      statusId: 'status'
+    });
+
     await renderAll();
   } catch (e) {
     console.error(e);
